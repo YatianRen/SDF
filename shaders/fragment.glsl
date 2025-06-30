@@ -12,11 +12,6 @@ uniform float u_pixelRatio;
 #define TWO_PI 6.2831853071795864769252867665590
 #endif
 
-/* variation constant */
-#ifndef VAR
-#define VAR 0
-#endif
-
 /* Coordinate and unit utils */
 #ifndef FNC_COORD
 #define FNC_COORD
@@ -41,18 +36,21 @@ vec2 coord(in vec2 p) {
 #define mx coord(u_mouse * u_pixelRatio)
 
 /* signed distance functions */
-float sdRoundRect(vec2 p, vec2 b, float r) {
-    vec2 d = abs(p - 0.5) * 4.2 - b + vec2(r);
-    return min(max(d.x, d.y), 0.0) + length(max(d, 0.0)) - r;
-}
 float sdCircle(in vec2 st, in vec2 center) {
     return length(st - center) * 2.0;
 }
-float sdPoly(in vec2 p, in float w, in int sides) {
-    float a = atan(p.x, p.y) + PI;
-    float r = TWO_PI / float(sides);
-    float d = cos(floor(0.5 + a / r) * r - a) * length(max(abs(p) * 1.0, 0.0));
-    return d * 2.0 - w;
+
+/* Lemniscate of Bernoulli SDF using polar form: r^2 = a^2 * cos(2*theta) */
+float sdLemniscate(vec2 p, float a) {
+    float r = length(p);
+    float theta = atan(p.y, p.x);
+    float cos2theta = cos(2.0 * theta);
+
+    // Only draw where cos(2theta) >= 0 (horizontal lobes)
+    if (cos2theta < 0.0) return 1e5;
+
+    float r_curve = a * sqrt(cos2theta);
+    return r - r_curve;
 }
 
 /* antialiased step function */
@@ -60,6 +58,7 @@ float aastep(float threshold, float value) {
     float afwidth = length(vec2(dFdx(value), dFdy(value))) * 0.70710678118654757;
     return smoothstep(threshold - afwidth, threshold + afwidth, value);
 }
+
 /* Signed distance drawing methods */
 float fill(in float x) { return 1.0 - aastep(0.0, x); }
 float fill(float x, float size, float edge) {
@@ -77,41 +76,62 @@ void main() {
     vec2 st = st0 + 0.5;
     vec2 posMouse = mx * vec2(1., -1.) + 0.5;
     
-    /* sdf (Round Rect) params */
-    float size = 1.2;
-    float roundness = 0.4;
-    float borderSize = 0.05;
+    /* sdf Circle params for interaction */
+    float circleSize = 0.005;
+    float circleEdge = 0.50;
     
-    /* sdf Circle params */
-    float circleSize = 0.3;
-    float circleEdge = 0.5;
-    
-    /* sdf Circle */
+    /* sdf Circle for interaction */
     float sdfCircle = fill(
         sdCircle(st, posMouse),
         circleSize,
         circleEdge
     );
     
-    float sdf;
-    if (VAR == 0) {
-        /* sdf round rectangle with stroke param adjusted by sdf circle */
-        sdf = sdRoundRect(st, vec2(size), roundness);
-        sdf = stroke(sdf, 0.0, borderSize, sdfCircle) * 4.0;
-    } else if (VAR == 1) {
-        /* sdf circle with fill param adjusted by sdf circle */
-        sdf = sdCircle(st, vec2(0.5));
-        sdf = fill(sdf, 0.6, sdfCircle) * 1.2;
-    } else if (VAR == 2) {
-        /* sdf circle with stroke param adjusted by sdf circle */
-        sdf = sdCircle(st, vec2(0.5));
-        sdf = stroke(sdf, 0.58, 0.02, sdfCircle) * 4.0;
-    } else if (VAR == 3) {
-        /* sdf circle with fill param adjusted by sdf circle */
-        sdf = sdPoly(st - vec2(0.5, 0.45), 0.3, 3);
-        sdf = fill(sdf, 0.05, sdfCircle) * 1.4;
-    }
+    // 1. Globe mask: 1 inside the globe, 0 outside, soft edge
+    float globeMask = 1.0 - smoothstep(0.0, 0.1, sdCircle(st, posMouse));
     
-    vec3 color = vec3(sdf);
+    // 2. Gradient mask: 1 at the edge of the infinity shape, 0 far away
+    float gradientMask = smoothstep(0.02, 0.25, abs(sdfCircle)); // 0.02 is near the edge, 0.25 is farther out
+    
+    // Lemniscate of Bernoulli
+    vec2 p = st - 0.5;
+    float a = 0.5; // size
+    float d = sdLemniscate(p, a);
+
+    // Use stroke for outline, modulated by sdfCircle (interaction)
+    float sdf = stroke(d, 0.0, 0.08, sdfCircle) * 1.4;
+    
+    vec3 backgroundColor = vec3(0.0);
+    vec3 glowColor1 = vec3(0.6, 0.63, 1.0);     // #99A1FF
+    vec3 glowColor2 = vec3(1.0, 0.84, 0.8);     // #FFD5CC
+    vec3 glowColor3 = vec3(0.63, 0.48, 0.99);   // #A07AFC
+    vec3 strokeColor = vec3(1.0, 1.0, 1.0);     // white
+
+    float glow = smoothstep(0.0, 0.5, sdf); // controls glow width
+
+    // Create a gradient: 0.0 -> glowColor1, 0.5 -> glowColor2, 1.0 -> glowColor3
+    vec3 glowGradient;
+    if (glow < 0.5) {
+        glowGradient = mix(glowColor1, glowColor2, glow * 2.0);
+    } else {
+        glowGradient = mix(glowColor2, glowColor3, (glow - 0.5) * 2.0);
+    }
+
+    // 3. Colors
+    vec3 globeColor = vec3(0.7, 0.2, 1.0); // purple
+    vec3 gradientColor = glowGradient;      // your multi-color gradient
+
+    // 4. Start with background
+    vec3 color = backgroundColor;
+
+    // 5. Add globe color inside the globe
+    color = mix(color, globeColor, globeMask);
+
+    // 6. Add gradient color at the boundary of the infinity shape
+    color = mix(color, gradientColor, gradientMask);
+
+    // 7. Add the white stroke for the infinity shape
+    color = mix(color, strokeColor, smoothstep(0.95, 1.0, sdf));
+    
     gl_FragColor = vec4(color.rgb, 1.0);
 }

@@ -71,67 +71,66 @@ float stroke(float x, float size, float w, float edge) {
     return clamp(d, 0.0, 1.0);
 }
 
+float opSmoothUnion(float d1, float d2, float k) {
+    float h = clamp(0.5 + 0.5 * (d2 - d1) / k, 0.0, 1.0);
+    return mix(d2, d1, h) - k * h * (1.0 - h);
+}
+
 void main() {
     vec2 pixel = 1.0 / u_resolution.xy;
     vec2 st = st0 + 0.5;
     vec2 posMouse = mx * vec2(1., -1.) + 0.5;
     
-    /* sdf Circle params for interaction */
-    float circleSize = 0.005;
-    float circleEdge = 0.50;
+    float circleSize = 0.0001;
+    float circleEdge = 0.6;
+    float strokeWidth = 0.10;
+    float baseStrokeEdge = 0.00;
     
-    /* sdf Circle for interaction */
-    float sdfCircle = fill(
-        sdCircle(st, posMouse),
-        circleSize,
-        circleEdge
-    );
-    
-    // 1. Globe mask: 1 inside the globe, 0 outside, soft edge
-    float globeMask = 1.0 - smoothstep(0.0, 0.1, sdCircle(st, posMouse));
-    
-    // 2. Gradient mask: 1 at the edge of the infinity shape, 0 far away
-    float gradientMask = smoothstep(0.02, 0.25, abs(sdfCircle)); // 0.02 is near the edge, 0.25 is farther out
+    // SDF for the cursor globe
+    float dGlobe = sdCircle(st, posMouse) - circleSize;
+    float globeMask = 1.0 - smoothstep(0.0, circleEdge, dGlobe);
     
     // Lemniscate of Bernoulli
     vec2 p = st - 0.5;
     float a = 0.5; // size
-    float d = sdLemniscate(p, a);
+    float dLemniscate = sdLemniscate(p, a);
 
-    // Use stroke for outline, modulated by sdfCircle (interaction)
-    float sdf = stroke(d, 0.0, 0.08, sdfCircle) * 1.4;
-    
-    vec3 backgroundColor = vec3(0.0);
-    vec3 glowColor1 = vec3(0.6, 0.63, 1.0);     // #99A1FF
-    vec3 glowColor2 = vec3(1.0, 0.84, 0.8);     // #FFD5CC
-    vec3 glowColor3 = vec3(0.63, 0.48, 0.99);   // #A07AFC
-    vec3 strokeColor = vec3(1.0, 1.0, 1.0);     // white
+    // Modulate the stroke's edge softness by the globe's SDF
+    float modulatedEdge = baseStrokeEdge + 0.5 * globeMask * circleEdge;
+    float strokeMask = stroke(dLemniscate, 0.0, strokeWidth, modulatedEdge);
 
-    float glow = smoothstep(0.0, 0.5, sdf); // controls glow width
+    // st: normalized coordinates (0,0) top-left, (1,1) bottom-right
+    vec2 start = vec2(0.2, 0.2); // gradient starts here
+    vec2 end   = vec2(0.8, 0.8); // gradient ends here
 
-    // Create a gradient: 0.0 -> glowColor1, 0.5 -> glowColor2, 1.0 -> glowColor3
-    vec3 glowGradient;
-    if (glow < 0.5) {
-        glowGradient = mix(glowColor1, glowColor2, glow * 2.0);
+    float gradT = dot((st - start), normalize(end - start)) / length(end - start);
+    gradT = clamp(gradT, 0.0, 1.0);
+
+    // Interpolate the gradient colors
+    vec3 color1 = vec3(0.63, 0.48, 0.99);   // #A07AFC
+    vec3 color2 = vec3(1.0, 0.84, 0.8);   // #FFD5CC
+    vec3 color3 = vec3(0.6, 0.63, 1.0); //  #99A1FF
+
+    vec3 strokeColor;
+    if (gradT < 0.5) {
+        strokeColor = mix(color1, color2, gradT * 2.0);
     } else {
-        glowGradient = mix(glowColor2, glowColor3, (glow - 0.5) * 2.0);
+        strokeColor = mix(color2, color3, (gradT - 0.5) * 2.0);
     }
 
-    // 3. Colors
-    vec3 globeColor = vec3(0.7, 0.2, 1.0); // purple
-    vec3 gradientColor = glowGradient;      // your multi-color gradient
+    // For color compositing
+    vec3 colorShape = strokeColor;
+    vec3 colorGlobe = vec3(0.0); // fully transparent (black, but alpha will be 0)
 
-    // 4. Start with background
-    vec3 color = backgroundColor;
+    // Globe alpha: 0 everywhere (fully transparent)
+    float globeAlpha = 0.0;
 
-    // 5. Add globe color inside the globe
-    color = mix(color, globeColor, globeMask);
+    // Start with black background
+    vec3 color = vec3(0.0);
+    // Add globe color everywhere, with alpha for transparency (no effect)
+    color = mix(color, colorGlobe, globeAlpha);
+    // Add stroke, modulated by globe
+    color = mix(color, colorShape, strokeMask);
 
-    // 6. Add gradient color at the boundary of the infinity shape
-    color = mix(color, gradientColor, gradientMask);
-
-    // 7. Add the white stroke for the infinity shape
-    color = mix(color, strokeColor, smoothstep(0.95, 1.0, sdf));
-    
-    gl_FragColor = vec4(color.rgb, 1.0);
+    gl_FragColor = vec4(color, 1.0);
 }

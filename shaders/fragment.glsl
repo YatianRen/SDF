@@ -3,6 +3,7 @@ varying vec2 v_texcoord;
 uniform vec2 u_mouse;
 uniform vec2 u_resolution;
 uniform float u_pixelRatio;
+uniform float u_time;
 
 /* common constants */
 #ifndef PI
@@ -118,8 +119,49 @@ void main() {
         strokeColor = mix(color2, color3, (gradT - 0.5) * 2.0);
     }
 
+    // Compute loading progress (0.0 to 1.0 over 6.0 seconds, then stays at 1.0)
+    float progress = min(u_time / 6.0, 1.0);
+
+    // Parameterize the lemniscate path for snake crawl
+    // p is st - 0.5 (centered coordinates)
+    float theta = atan(p.y, p.x); // -PI to PI
+    float offset = 0.5 * PI; // PI/2, left top
+    float thetaOffset = mod(theta - offset + 2.0 * PI, 2.0 * PI);
+    float lobe = step(0.0, p.x); // 0 for left lobe, 1 for right lobe
+    float tPath;
+    if (lobe < 0.5) {
+        // Left lobe: 0 (center top) to 0.5 (center bottom)
+        tPath = thetaOffset / PI * 0.5;
+    } else {
+        // Right lobe: reverse direction for top-to-bottom
+        tPath = 0.5 + (1.0 - (thetaOffset / PI)) * 0.5;
+    }
+    tPath = clamp(tPath, 0.0, 1.0);
+
+    // Add overlap for smooth center connection
+    float overlap = 0.70; // adjust for more/less overlap
+    float leftProgress = clamp(progress * 2.0, 0.0, 1.0 + overlap);
+    float rightProgress = clamp((progress - 0.5 + overlap/2.0) * 2.0, 0.0, 1.0);
+
+    float snakeMask = 0.0;
+    if (lobe < 0.5) {
+        // Left lobe: fill with leftProgress
+        float snakeHead = leftProgress;
+        float snakeTail = max(leftProgress - 0.22, 0.0);
+        snakeMask = 1.0 - smoothstep(snakeTail, snakeHead, tPath);
+        if (leftProgress >= 1.0) snakeMask = 1.0;
+    } else {
+        // Right lobe: fill with rightProgress
+        float snakeHead = rightProgress;
+        float snakeTail = max(rightProgress - 0.22, 0.0);
+        snakeMask = 1.0 - smoothstep(snakeTail, snakeHead, tPath);
+        if (rightProgress >= 1.0) snakeMask = 1.0;
+    }
+
+    // Multiply the stroke color by the snake mask (reveal as snake passes)
+    vec3 colorShape = strokeColor * snakeMask;
+
     // For color compositing
-    vec3 colorShape = strokeColor;
     vec3 colorGlobe = vec3(0.0); // fully transparent (black, but alpha will be 0)
 
     // Globe alpha: 0 everywhere (fully transparent)

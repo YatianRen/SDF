@@ -41,7 +41,8 @@ const mat = new THREE.ShaderMaterial({
   uniforms: {
     u_mouse: { value: vMouseDamp },
     u_resolution: { value: vResolution },
-    u_pixelRatio: { value: 2 }
+    u_pixelRatio: { value: 2 },
+    u_time: { value: 0.0 }
   },
   defines: {
     VAR: variation
@@ -68,6 +69,9 @@ const update = () => {
   for (const k in vMouse) {
     if (k == 'x' || k == 'y') vMouseDamp[k] = THREE.MathUtils.damp(vMouseDamp[k], vMouse[k], 8, dt);
   }
+
+  // update time uniform for loading animation
+  mat.uniforms.u_time.value = time;
 
   // render scene
   requestAnimationFrame(update);

@@ -14,7 +14,7 @@ export default defineConfig({
       compress: false, // Compress the resulting shader code
     })],
   root: '',
-  base: './',
+  base: '/SDF/',
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
